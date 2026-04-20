@@ -7,13 +7,26 @@ const priority = require('priority-web-sdk');
 const app = express();
 app.use(express.json());
 
-const config = {
-    url: 'https://host6013.priority-guru.co.il', 
-    tabulaini: 'tabula.ini',
+let config = {
+    url: '', 
+    tabulaini: '',
     language: 1,
-    company: 'demo',       
-    username: 'TEST', 
-    password: 'fuko560'
+    company: '',       
+    username: '', 
+    password: ''
+};
+
+const userId = 35;
+
+function fillConfig(req) {
+  config = {
+    url: req.body.priorityUrl, 
+    tabulaini: req.body.tabulaIni,
+    language: 1,
+    company: req.body.company,       
+    username: req.body.username, 
+    password: req.body.password
+    };
 };
 
 app.post('/api/close-tiv', async (req, res) => {
@@ -38,6 +51,7 @@ app.post('/api/close-tiv', async (req, res) => {
         console.log(`מתחיל תהליך עבור מזהה חשבונית: ${ivNum}`);
 
         // 1. התחברות
+        fillConfig(req);
         await priority.login(config);
         console.log("1. מחובר בהצלחה.");
 
@@ -121,8 +135,11 @@ app.post('/api/prep-bank-recorn', async (req, res) => {
         console.log(`--- מתחיל תהליך PREPBANKRECON ---`);
         console.log("נתוני קלט:", JSON.stringify(inputMap)); 
 
-        if (priority.login && typeof priority.login === 'function') await priority.login(config);
-        
+        if (priority.login && typeof priority.login === 'function') 
+        {
+            fillConfig(req)
+            await priority.login(config);
+        }
         let step = await priority.procStart('PREPBANKRECON', 'P', null);
 
         while (step.type !== 'menu' && step.type !== 'end' && stepsCounter < 100) {
@@ -247,7 +264,10 @@ app.post('/api/prepare-bank-Reconciliation', async (req, res) => {
         console.log(`--- מתחיל תהליך PREPBANKRECON ---`);
         console.log("נתוני קלט:", JSON.stringify(inputMap)); 
 
-        if (priority.login && typeof priority.login === 'function') await priority.login(config);
+        if (priority.login && typeof priority.login === 'function') {
+            fillConfig(req)
+            await priority.login(config);
+        }
         
         let step = await priority.procStart('PREPBANKRECON', 'P', null);
 
@@ -378,7 +398,11 @@ app.post('/api/approve-bank-Reconciliation-using-websdk', async (req, res) => {
         return res.status(400).send({ error: "חובה לשלוח מזהה חשבונית (ivNum)" });
     }
 
-    if (priority.login && typeof priority.login === 'function') await priority.login(config);
+    if (priority.login && typeof priority.login === 'function') {
+        fillConfig(req)
+        await priority.login(config);
+    }
+
     let step = await priority.formStart('BANKRECONSP',null,null,null,1);
   
     let myFilter = {
@@ -429,6 +453,7 @@ app.post('/api/approve-bank-Reconciliation-using-websdk', async (req, res) => {
         });
 });
 
+// -----   אישור התאמות גורף    ------
 app.post('/api/approve-bank-Reconciliation', async (req, res) => {
     
 	// --- הוספת אבטחה: בדיקת מפתח סודי ---
@@ -440,33 +465,158 @@ app.post('/api/approve-bank-Reconciliation', async (req, res) => {
     }
     // ------------------------------------
 
-    const user = req.body.user; 
-    const bline = req.body.bline; 
+    const line = req.body.line; 
+    const bankpage = req.body.bankpage; 
+    const iv = req.body.iv; 
     const axios = require('axios'); 
-    
-    if (!user) {
-        return res.status(400).send({ error: "חובה לשלוח מזהה משתמש (user)" });
+   
+    if (!bankpage) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה דף בנק (bankpage)" });
     }
 
-     if (!bline) {
-        return res.status(400).send({ error: "חובה לשלוח מזהה שורה (bline)" });
+     if (!line) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה שורה (line)" });
     }
 
-    const baseURL = 'https://host6013.priority-guru.co.il/odata/Priority/tabula.ini/demo/BANKRECONSP(BLINE=' + bline + ',USER=' + user + ')';
+     if (!iv) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה קבלה (iv)" });
+    }
+
+    const bline = 3;
+
+    let baseURL = 'https://host6013.priority-guru.co.il/odata/Priority/tabula.ini/demo/BANKRECONSP(BLINE=' + bline + ',USER=' + userId + ')';
 
     const headers = {
         'Authorization': 'Basic ' + Buffer.from('TEST:fuko560').toString('base64'),
         'Content-Type': 'application/json'
     };
 
+    const params = {
+        "$filter": "USERLOGIN eq 'TEST'"
+    };
+
     try {
+
+        try {
+            baseURL = 'https://host6013.priority-guru.co.il/odata/Priority/tabula.ini/demo/USERS'
+            const response = await axios.get(baseURL, { headers, params});
+
+            console.log(response.data);
+
+            console.log(`תהליך עדכון הסתיים בהצלחה`);
+        } catch (error) {
+             console.log(`תהליך עדכוןsss נכשל`);
+        }
 
         console.log(`-------------------------------------------`);
         console.log(`מתחיל תהליך עדכון`);
 
-        await axios.patch(baseURL, {
-            "RECON": "Y"
-        }, { headers });
+        try {
+            await axios.patch(baseURL, {
+            
+            }, { headers });
+
+            console.log(`תהליך עדכון הסתיים בהצלחה`);
+        } catch (error) {
+            console.log(`תהליך עדכון נכשל`);
+            return res.status(500).json({ 
+            status: "error", 
+            message: error.message || "`תהליך עדכון נכשל" 
+            });
+        }
+
+        // 1. התחברות
+        fillConfig(req);
+        await priority.login(config);
+        console.log("1. מחובר בהצלחה.");
+
+        // 2.  פתיחת פרוצדורה התאמה
+        let step = await priority.procStart('CLOSEBANKRECONISP', 'P', null);
+        console.log("2. פרוצדורת התאמה נפתחה. סטטוס:", step.type);
+
+        // 3. הזנת נתונים
+        // בודקים אם אנחנו בשלב של קליטת פרמטרים
+        if (step.type === 'inputFields') {
+            
+            // מכינים את אובייקט הקלט לפי המבנה שה-SDK דורש
+            // אנחנו לוקחים את ה-ID של השדה הראשון (PAR) מתוך מה שהשרת שלח לנו
+            const fieldId = step.input.EditFields[0].field; 
+
+            const inputData = {
+                EditFields: [
+                    {
+                        field: fieldId,     // מזהה השדה (בדרך כלל 1)
+                        value: ivNum.toString() // הערך לשליחה
+                    }
+                ]
+            };
+
+            console.log("3. שולח ערך:", ivNum);
+            
+            // שימוש בפונקציה inputFields הנמצאת תחת .proc
+            // המספר 1 בהתחלה מסמן "אישור/המשך"
+            step = await step.proc.inputFields(1, inputData);
+        }
+
+        // 4. בדיקת תוצאות (הצעד הבא שהתקבל)
+        // אם הפרוצדורה הסתיימה, נקבל בדרך כלל הודעה או שהצעד יהיה מסוג אחר
+        console.log("4. סטטוס סופי:", step.type);
+        
+        messages = [];
+        if (step.proc && step.proc.message) {
+            messages = step.proc.message; // לפעמים ההודעות כאן
+        } 
+        // לפעמים ההודעה נמצאת בגוף הצעד עצמו כתלות בגרסה
+        if (step.message) {
+             messages = step.message;
+        }
+
+
+        // 5.  פתיחת פרוצדורה אישור התאמות גורף
+        step = await priority.procStart('CLOSECREDITRECONSP', 'P', null);
+        console.log("2. פרוצדורת אישור התאמות גורף נפתחה. סטטוס:", step.type);
+
+        // 3. הזנת נתונים
+        // בודקים אם אנחנו בשלב של קליטת פרמטרים
+        if (step.type === 'inputFields') {
+            
+            // מכינים את אובייקט הקלט לפי המבנה שה-SDK דורש
+            // אנחנו לוקחים את ה-ID של השדה הראשון (PAR) מתוך מה שהשרת שלח לנו
+            const fieldId = step.input.EditFields[0].field; 
+
+            const inputData = {
+                EditFields: [
+                    {
+                        field: fieldId,     // מזהה השדה (בדרך כלל 1)
+                        value: ivNum.toString() // הערך לשליחה
+                    }
+                ]
+            };
+
+            console.log("3. שולח ערך:", ivNum);
+            
+            // שימוש בפונקציה inputFields הנמצאת תחת .proc
+            // המספר 1 בהתחלה מסמן "אישור/המשך"
+            step = await step.proc.inputFields(1, inputData);
+        }
+
+        // 4. בדיקת תוצאות (הצעד הבא שהתקבל)
+        // אם הפרוצדורה הסתיימה, נקבל בדרך כלל הודעה או שהצעד יהיה מסוג אחר
+        console.log("4. סטטוס סופי:", step.type);
+        
+        let messages = [];
+        if (step.proc && step.proc.message) {
+            messages = step.proc.message; // לפעמים ההודעות כאן
+        } 
+        // לפעמים ההודעה נמצאת בגוף הצעד עצמו כתלות בגרסה
+        if (step.message) {
+             messages = step.message;
+        }
+
+        // התנתקות
+        try { await priority.logout(); } catch(e) {}
+
+
 
         console.log("✅ סיום בהצלחה!");
 
