@@ -9,6 +9,7 @@ app.use(express.json());
 
 let config = {
     url: '', 
+    virtualApiUrl: '',
     tabulaini: '',
     language: 1,
     company: '',       
@@ -16,11 +17,10 @@ let config = {
     password: ''
 };
 
-const userId = 35;
-
 function fillConfig(req) {
   config = {
     url: req.body.priorityUrl, 
+    virtualApiUrl: req.body.virtualApiUrl, 
     tabulaini: req.body.tabulaIni,
     language: 1,
     company: req.body.company,       
@@ -459,6 +459,7 @@ app.post('/api/approve-bank-Reconciliation', async (req, res) => {
 	// --- הוספת אבטחה: בדיקת מפתח סודי ---
     const mySecret = "MY_SUPER_SECRET_PASSWORD_123"; // סיסמה שרק את ו-Make יודעים
     const providedKey = req.headers['x-api-key']; // Make ישלח את זה בכותרת
+    let stepsCounter = 0 ;
 
     if (providedKey !== mySecret) {
         return res.status(401).json({ error: "Access Denied: Wrong Password" });
@@ -482,141 +483,262 @@ app.post('/api/approve-bank-Reconciliation', async (req, res) => {
         return res.status(400).send({ error: "חובה לשלוח מזהה קבלה (iv)" });
     }
 
-    const bline = 3;
+    fillConfig(req);
 
-    let baseURL = 'https://host6013.priority-guru.co.il/odata/Priority/tabula.ini/demo/BANKRECONSP(BLINE=' + bline + ',USER=' + userId + ')';
-
+    const userpassword = config.username + ':' + config.password
     const headers = {
-        'Authorization': 'Basic ' + Buffer.from('TEST:fuko560').toString('base64'),
+        'Authorization': 'Basic ' + Buffer.from(userpassword).toString('base64'),
         'Content-Type': 'application/json'
     };
 
-    const params = {
-        "$filter": "USERLOGIN eq 'TEST'"
-    };
+    let params = {"$filter": ""};
+    let userlogin = "";
+    const baseURL = config.url + '/' + config.virtualApiUrl + '/' + config.tabulaini + '/' + config.company    
+    let formname = "";    
+    
+    // Check if user is using a token    
+    if (config.password == "PAT") {    
+        console.log(`קבלת שם משתמש לפי טוקן`);
+        formname = '/PATOKENS' ;                    
+        const patname = config.username.slice(0, 4) + '*'.repeat(config.username.length - 8) + config.username.slice(-4);
+        params = {"$filter": "PATNAME eq '" + patname + "'"};
 
-    try {
+        try {            
+            let response = await axios.get(baseURL + formname, { headers, params});
+            userlogin = response.data.value[0].USERLOGIN ;
 
-        try {
-            baseURL = 'https://host6013.priority-guru.co.il/odata/Priority/tabula.ini/demo/USERS'
-            const response = await axios.get(baseURL, { headers, params});
-
-            console.log(response.data);
-
-            console.log(`תהליך עדכון הסתיים בהצלחה`);
+            console.log(`התקבל שם משתמש לפי טוקן: ${userlogin}`);
         } catch (error) {
-             console.log(`תהליך עדכוןsss נכשל`);
-        }
-
-        console.log(`-------------------------------------------`);
-        console.log(`מתחיל תהליך עדכון`);
-
-        try {
-            await axios.patch(baseURL, {
-            
-            }, { headers });
-
-            console.log(`תהליך עדכון הסתיים בהצלחה`);
-        } catch (error) {
-            console.log(`תהליך עדכון נכשל`);
+            console.log(`נכשלה קבלת שם משתמש לפי טוקן`);
             return res.status(500).json({ 
             status: "error", 
-            message: error.message || "`תהליך עדכון נכשל" 
+            message: "נכשלה קבלת שם משתמש לפי טוקן" + error.message 
+            });
+        }
+        
+    }
+    else {        
+        userlogin = config.username;
+    }
+
+    // Get USER ID by user name
+    let userId = 0;
+    try {    
+            console.log(`-------------------------------------------`);
+            console.log(`קבלת מספר משתמש לפי שם משתמש`);
+
+            params = {
+                "$filter": "USERLOGIN eq '" + userlogin + "'"
+            };
+            formname = '/USERS' ;
+
+            response = await axios.get(baseURL + formname, { headers, params});
+
+            userId = response.data.value[0].USER ;
+
+            console.log(`התקבל מספר משתמש לפי שם משתמש: ${userId}`);
+        } catch (error) {
+            console.log(`נכשלה קבלת מספר משתמש לפי שם משתמש`);
+            return res.status(500).json({ 
+            status: "error", 
+            message: "נכשלה קבלת מספר משתמש לפי שם משתמש" + error.message
             });
         }
 
-        // 1. התחברות
-        fillConfig(req);
+    // Get IVNUM by iv 
+    let ivnum = 0;   
+    try {    
+        console.log(`-------------------------------------------`);
+        console.log(`קבלת מספר חשבונית`);
+
+        params = {
+            "$filter": "IV eq " + iv 
+        };
+        formname = '/TINVOICES' ;
+
+        response = await axios.get(baseURL + formname, { headers, params});
+
+        ivnum = response.data.value[0].IVNUM ;
+
+        console.log(`התקבלה מספר קבלה  ${ivnum}`);
+    } catch (error) {
+        console.log(`נכשלה קבלת מספר קבלה`);
+        return res.status(500).json({ 
+        status: "error", 
+        message: "נכשלה קבלת מספר קבלה" + error.message 
+        });
+    }
+    
+    // Get bline by ivnum
+    let ivbline = 0;
+    try {    
+        console.log(`-------------------------------------------`);
+        console.log(`קבלת מספר שורה עבור קבלה`);
+
+        params = {
+            "$filter": "FRST_IVNUM eq '" + ivnum + "'" 
+        };
+        formname = '/BANKRECONSP' ;
+
+        response = await axios.get(baseURL + formname, { headers, params});
+
+        ivbline = response.data.value[0].BLINE ;
+
+        console.log(`התקבל מספר שורה עבור קבלה  ${ivbline}`);
+    } catch (error) {
+        console.log(`נכשלה קבלת מספר שורה עבור קבלה`);
+        return res.status(500).json({ 
+        status: "error", 
+        message: "נכשלה קבלת מספר שורה עבור קבלה במשטח התאמות בנק"  + error.message
+        });
+    }
+    
+    // Get bline by bank page and line
+    let bline = 0;
+    try {    
+        console.log(`-------------------------------------------`);
+        console.log(`קבלת מספר שורה`);
+
+        params = {
+            "$filter": "ERPG_BANKPAGE eq " + bankpage + " AND ERPG_KLINE eq " + line
+        };
+        formname = '/BANKRECONSP' ;
+
+        response = await axios.get(baseURL + formname, { headers, params});
+
+        bline = response.data.value[0].BLINE ;
+
+        console.log(`התקבל מספר שורה ${bline}`);
+    } catch (error) {
+        console.log(`נכשלה קבלת מספר שורה`);
+        return res.status(500).json({ 
+        status: "error", 
+        message: "נכשלה קבלת מספר שורה במשטח התאמות בנק" + error.message 
+        });
+    }
+
+    console.log(`-------------------------------------------`);
+    console.log(`מתחיל תהליך עדכון`);
+
+    try {
+        console.log(`-------------------------------------------`);
+        console.log(`סימון שורת קבלה`);
+
+        formname = "/BANKRECONSP(BLINE=" + ivbline + ",USER=" + userId + ")" ;
+      
+        try {
+            await axios.patch(baseURL + formname, 
+                {"RECON": "Y"}, { headers });
+
+            console.log(`סימון שורת קבלה הסתיים בהצלחה`);
+        } catch (error) {
+            console.log(`סימון שורת קבלה נכשל`);
+            return res.status(500).json({ 
+            status: "error", 
+            message: "סימון שורת קבלה במשטח התאמות בנק נכשל" + error.message
+            });
+        }
+
+        console.log(`-------------------------------------------`);
+        console.log(`סימון שורת דף בנק`);
+
+        formname = "/BANKRECONSP(BLINE=" + bline + ",USER=" + userId + ")" ;
+      
+        try {
+            await axios.patch(baseURL + formname, 
+                {"RECON": "Y"}, { headers });
+
+            console.log(`סימון שורת דף בנק הסתיים בהצלחה`);
+        } catch (error) {
+            console.log(`סימון שורת דף בנק נכשל`);
+            return res.status(500).json({ 
+            status: "error", 
+            message: "סימון שורת דף בנק במשטח התאמות בנק נכשל" + error.message
+            });
+        }
+
+        // 1. התחברות           
         await priority.login(config);
         console.log("1. מחובר בהצלחה.");
 
         // 2.  פתיחת פרוצדורה התאמה
         let step = await priority.procStart('CLOSEBANKRECONISP', 'P', null);
-        console.log("2. פרוצדורת התאמה נפתחה. סטטוס:", step.type);
+        console.log("פרוצדורת התאמה נפתחה:", step.type);
 
-        // 3. הזנת נתונים
-        // בודקים אם אנחנו בשלב של קליטת פרמטרים
-        if (step.type === 'inputFields') {
-            
-            // מכינים את אובייקט הקלט לפי המבנה שה-SDK דורש
-            // אנחנו לוקחים את ה-ID של השדה הראשון (PAR) מתוך מה שהשרת שלח לנו
-            const fieldId = step.input.EditFields[0].field; 
+        while (step.type !== 'menu' && step.type !== 'end' && stepsCounter < 100) {
+            stepsCounter++;
+            console.log(`>> צעד ${stepsCounter} | סוג: ${step.type}`);
 
-            const inputData = {
-                EditFields: [
-                    {
-                        field: fieldId,     // מזהה השדה (בדרך כלל 1)
-                        value: ivNum.toString() // הערך לשליחה
+
+            messages = [];
+            if (step.proc && step.proc.message) {
+                messages = step.proc.message; // לפעמים ההודעות כאן
+            } 
+            // לפעמים ההודעה נמצאת בגוף הצעד עצמו כתלות בגרסה
+            if (step.message) {
+                messages = step.message;
+            }
+
+            if (messages){
+                console.log(messages);
+            }
+
+            if (['warning', 'message', 'WRNMSG'].includes(step.type)) {
+                console.log(`⚠️ אזהרה: "${step.message}".`);
+                try {
+                    step = await step.proc.inputFields(1, {}); 
+                    console.log("   -> עבר (Enter)");
+                } catch (e1) {
+                    try {
+                        step = await step.proc.warning(1);
+                        console.log("   -> עבר (warning)");
+                    } catch (e2) {
+                        try { step = await step.proc.message(1); } catch(e) {}
                     }
-                ]
-            };
-
-            console.log("3. שולח ערך:", ivNum);
-            
-            // שימוש בפונקציה inputFields הנמצאת תחת .proc
-            // המספר 1 בהתחלה מסמן "אישור/המשך"
-            step = await step.proc.inputFields(1, inputData);
+                }
+            }
         }
 
-        // 4. בדיקת תוצאות (הצעד הבא שהתקבל)
-        // אם הפרוצדורה הסתיימה, נקבל בדרך כלל הודעה או שהצעד יהיה מסוג אחר
-        console.log("4. סטטוס סופי:", step.type);
-        
-        messages = [];
-        if (step.proc && step.proc.message) {
-            messages = step.proc.message; // לפעמים ההודעות כאן
-        } 
-        // לפעמים ההודעה נמצאת בגוף הצעד עצמו כתלות בגרסה
-        if (step.message) {
-             messages = step.message;
-        }
-
-
-        // 5.  פתיחת פרוצדורה אישור התאמות גורף
+        // 3.  פתיחת פרוצדורה אישור התאמות גורף
         step = await priority.procStart('CLOSECREDITRECONSP', 'P', null);
-        console.log("2. פרוצדורת אישור התאמות גורף נפתחה. סטטוס:", step.type);
+        console.log("פרוצדורת אישור התאמות גורף נפתחה. סטטוס:", step.type);
+        stepsCounter = 0;
 
-        // 3. הזנת נתונים
-        // בודקים אם אנחנו בשלב של קליטת פרמטרים
-        if (step.type === 'inputFields') {
-            
-            // מכינים את אובייקט הקלט לפי המבנה שה-SDK דורש
-            // אנחנו לוקחים את ה-ID של השדה הראשון (PAR) מתוך מה שהשרת שלח לנו
-            const fieldId = step.input.EditFields[0].field; 
+        while (step.type !== 'menu' && step.type !== 'end' && stepsCounter < 100) {
+            stepsCounter++;
+            console.log(`>> צעד ${stepsCounter} | סוג: ${step.type}`);
 
-            const inputData = {
-                EditFields: [
-                    {
-                        field: fieldId,     // מזהה השדה (בדרך כלל 1)
-                        value: ivNum.toString() // הערך לשליחה
+            let messages = [];
+            if (step.proc && step.proc.message) {
+                messages = step.proc.message; // לפעמים ההודעות כאן
+            } 
+            // לפעמים ההודעה נמצאת בגוף הצעד עצמו כתלות בגרסה
+            if (step.message) {
+                messages = step.message;
+            }
+
+            if (messages){
+                console.log(messages);
+            }
+
+            if (['warning', 'message', 'WRNMSG'].includes(step.type)) {
+                console.log(`⚠️ אזהרה: "${step.message}".`);
+                try {
+                    step = await step.proc.inputFields(1, {}); 
+                    console.log("   -> עבר (Enter)");
+                } catch (e1) {
+                    try {
+                        step = await step.proc.warning(1);
+                        console.log("   -> עבר (warning)");
+                    } catch (e2) {
+                        try { step = await step.proc.message(1); } catch(e) {}
                     }
-                ]
-            };
-
-            console.log("3. שולח ערך:", ivNum);
-            
-            // שימוש בפונקציה inputFields הנמצאת תחת .proc
-            // המספר 1 בהתחלה מסמן "אישור/המשך"
-            step = await step.proc.inputFields(1, inputData);
-        }
-
-        // 4. בדיקת תוצאות (הצעד הבא שהתקבל)
-        // אם הפרוצדורה הסתיימה, נקבל בדרך כלל הודעה או שהצעד יהיה מסוג אחר
-        console.log("4. סטטוס סופי:", step.type);
-        
-        let messages = [];
-        if (step.proc && step.proc.message) {
-            messages = step.proc.message; // לפעמים ההודעות כאן
-        } 
-        // לפעמים ההודעה נמצאת בגוף הצעד עצמו כתלות בגרסה
-        if (step.message) {
-             messages = step.message;
+                }
+            }
         }
 
         // התנתקות
         try { await priority.logout(); } catch(e) {}
-
-
 
         console.log("✅ סיום בהצלחה!");
 
@@ -633,6 +755,160 @@ app.post('/api/approve-bank-Reconciliation', async (req, res) => {
             message: error.message || "שגיאה בביצוע הפרוצדורה" 
         });
     }
+});
+
+// -----   פונקציה ללמידה של המערכת מהתאמות שביצע המשתמש   ------
+app.post('/api/get-bank-Reconciliation', async (req, res) => {
+    
+	// --- הוספת אבטחה: בדיקת מפתח סודי ---
+    const mySecret = "MY_SUPER_SECRET_PASSWORD_123"; // סיסמה שרק את ו-Make יודעים
+    const providedKey = req.headers['x-api-key']; // Make ישלח את זה בכותרת
+
+    if (providedKey !== mySecret) {
+        return res.status(401).json({ error: "Access Denied: Wrong Password" });
+    }
+    // ------------------------------------
+
+    const line = req.body.line; 
+    const bankpage = req.body.bankpage; 
+    const bankcode = req.body.bankcode; 
+    const accountingcode = req.body.accountingcode;     
+    const customerid = req.body.customerid; 
+    const axios = require('axios');
+   
+    if (!line) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה שורה (line)" });
+    }
+
+    if (!bankpage) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה דף בנק (bankpage)" });
+    }
+
+     if (!bankcode) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה קוד חשבון בנק (bankcode)" });
+    }
+
+    if (!accountingcode) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה מספר חשבון בנק בהנהלת חשבונות (accountingcode)" });
+    }
+
+    if (!customerid) {
+        return res.status(400).send({ error: "חובה לשלוח מזהה לקוח (accountingcode)" });
+    }
+
+    fillConfig(req);
+
+    const userpassword = config.username + ':' + config.password
+    const headers = {
+        'Authorization': 'Basic ' + Buffer.from(userpassword).toString('base64'),
+        'Content-Type': 'application/json'
+    };
+
+    let params = {"$filter": ""};    
+    const baseURL = config.url + '/' + config.virtualApiUrl + '/' + config.tabulaini + '/' + config.company    
+    let formname = "";    
+    
+    // Get ERECONNUM by bankpage and line
+    let ereconnum = 0;
+    try {    
+            console.log(`-------------------------------------------`);
+            console.log(`קבלת מספר התאמה`);
+
+            params = {
+                "$filter": "BANKPAGE eq " + bankpage + " AND KLINE eq " + line
+            };
+            formname = '/BANKLINESA' ;
+
+            response = await axios.get(baseURL + formname, { headers, params});
+
+            ereconnum = response.data.value[0].ERECONNUM ;
+
+            console.log(`התקבל מספר משתמש לפי שם משתמש: ${ereconnum}`);
+
+            if (ereconnum === 0){
+                return res.json({ 
+                status: "success", 
+                stepType: "התאמה",
+                messages: "אין מספר התאמה" 
+                });
+            }
+        } catch (error) {
+            console.log(`נכשלה קבלת מספר משתמש לפי שם משתמש`);
+            return res.status(500).json({ 
+            status: "error", 
+            message: "נכשלה קבלת מספר משתמש לפי שם משתמש" + error.message
+            });
+        }
+
+    // Get record from finances log by ERECONNUM    
+    try {    
+            console.log(`-------------------------------------------`);
+            console.log(`קבלת רשומות מלוג תנועות יומן`);
+
+            params = {
+                "$filter": "ERECONNUM eq " + ereconnum + " AND ACCNAME eq '" + accountingcode + "'"
+            };
+            formname = '/FNCLOG' ;
+
+            response = await axios.get(baseURL + formname, { headers, params});
+
+            if (response.data.value.length === 1){
+                const iAccountName = response.data.value[0].IACCNAME ;
+                if (iAccountName === customerid) {
+                    return res.json({ 
+                    status: "success", 
+                    stepType: "התאמה",
+                    messages: customerid
+                    });
+                // Get from List of financial certificates
+                } else {
+                    const referenceNo = response.data.value[0].IVNUM ;
+                    params = {
+                        "$filter": "IVNUM  eq " + referenceNo 
+                    };
+                    formname = '/GENINVOICES' ;
+
+                    response = await axios.get(baseURL + formname, { headers, params});
+
+                    if (response.data.value.length === 0){
+                        return res.json({ 
+                        status: "success", 
+                        stepType: "התאמה",
+                        messages: "NC"
+                        });
+
+                    } else {
+                        if (response.data.value[0].IVDES === "קבלות") {
+                            return res.json({ 
+                            status: "success", 
+                            stepType: "התאמה",
+                            messages: iAccountName
+                            });
+                        } else {
+                            return res.json({ 
+                            status: "success", 
+                            stepType: "התאמה",
+                            messages: "NC"
+                            });
+                        }
+                    }
+                }
+                
+            } else {
+                return res.json({ 
+                    status: "success", 
+                    stepType: "התאמה",
+                    messages: "NC"
+                    });
+            }
+
+        } catch (error) {
+            console.log(`נכשלה קבלת מספר משתמש לפי שם משתמש`);
+            return res.status(500).json({ 
+            status: "error", 
+            message: "נכשלה קבלת מספר משתמש לפי שם משתמש" + error.message
+            });
+        }
 });
 
 const PORT = process.env.PORT || 3000;
